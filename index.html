@@ -65,6 +65,36 @@
   .legend .keys span::before{content:"";display:inline-block;width:10px;height:10px;margin-right:6px;vertical-align:-1px;border:1px solid var(--line)}
   .lg-occ::before{background:var(--occ-bg)}
   .lg-vac::before{background:var(--vac-bg)}
+  /* ---------- 메인: 호실별 월세 납부상태 ---------- */
+  .cell.room{flex-direction:column;justify-content:flex-start;gap:4px;padding:28px 6px 8px;border-left:4px solid transparent}
+  .cell.room .names{flex:1;display:flex;align-items:center;justify-content:center}
+  .cell .payday{position:absolute;top:8px;right:8px;font-size:.7rem;opacity:.75;font-weight:500}
+  .cell .rent{font-size:.78rem;font-weight:500;opacity:.85;font-variant-numeric:tabular-nums}
+  .chip{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .chip.paid{background:#2f7d4a;color:#fff}
+  .chip.part{background:#a8761c;color:#fff}
+  .chip.late{background:#b4423b;color:#fff}
+  .chip.due{background:transparent;color:var(--sub);border:1px solid var(--line)}
+  .chip.yearly{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  .cell.st-paid{border-left-color:#4caf6e;background:#1f4434}
+  .cell.st-part{border-left-color:#e0a43a}
+  .cell.st-late{border-left-color:#e2675e}
+  .mon-nav{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+  .mon-nav .ym{font-weight:700;color:var(--strong);min-width:92px;text-align:center}
+  .rentbar{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:6px;font-size:.82rem;color:var(--sub)}
+  .rentbar b{color:var(--strong);font-variant-numeric:tabular-nums}
+  .rentbar .late b{color:var(--in)}
+  .rentbar .paid b{color:#7fd48a}
+  .lg-paid::before{background:#1f4434 !important;border-color:#4caf6e !important}
+  .lg-late::before{background:var(--occ-bg) !important;border-left:3px solid #e2675e !important}
+  @media (max-width:600px){
+    .cell.room{padding:24px 3px 6px}
+    .cell .payday{top:6px;right:5px;font-size:.62rem}
+    .label{top:6px;left:6px}
+    .cell .rent{font-size:.68rem}
+    .chip{font-size:.64rem;padding:1px 5px}
+    .cell .names{font-size:.85rem}
+  }
   .databar{display:flex;gap:6px;align-items:center;margin-top:10px;font-size:.78rem;color:var(--sub);flex-wrap:wrap}
   .live{font-size:.72rem;color:var(--muted);margin-left:auto}
   .live.on::before{content:"●";color:#7fd48a;margin-right:4px}
@@ -693,28 +723,65 @@ function renderMain(){
     [`${mon}월 입금`, fmt(mIn), '원', 'in'],
     [`${mon}월 출금`, fmt(mOut), '원', 'out']
   ]));
+  // 월 선택 (기본: 이번 달)
+  const sym = ui.mainYm || ym, [sy, sm] = sym.split('-').map(Number);
+  const nav = el('div','mon-nav');
+  const go = k => { const d = new Date(sy, sm - 1 + k, 1); ui.mainYm = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; renderMain(); };
+  nav.append(btn('◀','small edit', () => go(-1)), el('span','ym', `${sy}년 ${sm}월`), btn('▶','small edit', () => go(1)));
+  if(sym !== ym) nav.append(btn('이번 달','small', () => { ui.mainYm = null; renderMain(); }));
+  nav.append(el('span','note', '월세 납부현황'));
+  $app.append(nav);
+
   const grid = el('div','grid');
   const common = el('div','cell common');
   common.append(el('span','label','공용'), el('span','names','금전출납부 · 달력 보기'));
   common.onclick = () => location.hash = '#/common';
   grid.append(common);
+  const sum = {exp:0, got:0, rooms:0, paid:0, late:0, yearly:0};
   ROOMS.forEach(r => {
     const ts = db.rooms[r.no].tenants;
-    const cell = el('div', 'cell ' + (ts.length ? 'occupied' : 'vacant'));
+    const st = ts.length ? rentStatus(r.no, sym) : null;
+    const cell = el('div', 'cell room ' + (ts.length ? 'occupied' : 'vacant') + (st ? ' st-' + st.code : ''));
     cell.append(el('span','label', r.no + '호'));
     cell.append(el('span','names', ts.length ? ts.map(t => t.name || '(이름없음)').join('\n') : '공실'));
+    if(st){
+      if(st.code === 'yearly'){
+        sum.yearly++;
+        cell.append(el('span','rent', fmtMan(st.rent)), el('span','chip yearly', st.end ? `사글세 ~${st.end.slice(2,7).replace('-','.')}` : '사글세'));
+      }else{
+        sum.rooms++; sum.exp += st.rent; sum.got += st.paid;
+        if(st.code === 'paid') sum.paid++;
+        if(st.code === 'late') sum.late++;
+        if(st.day) cell.append(el('span','payday', st.day + '일'));
+        cell.append(el('span','rent', fmtMan(st.rent)));
+        const txt = {paid:`✓ ${st.last}`, part:`일부 ${fmtMan(st.paid)}`, late:'미납', due:'예정'}[st.code];
+        cell.append(el('span', 'chip ' + st.code, txt));
+      }
+    }
     cell.onclick = () => location.hash = '#/room/' + r.no;
     grid.append(cell);
   });
   $app.append(grid);
 
+  // 월세 합계 줄
+  const rb = el('div','rentbar');
+  const item = (lbl, val, cls) => { const s = el('span', cls || null, lbl + ' '); s.append(el('b', null, val)); return s; };
+  rb.append(item(`${sm}월 월세 예정`, fmt(sum.exp) + '원'),
+            item('입금', fmt(sum.got) + '원', 'paid'),
+            item('남은 금액', fmt(Math.max(sum.exp - sum.got, 0)) + '원'),
+            item('납부', `${sum.paid}/${sum.rooms}호실`, 'paid'));
+  if(sum.late) rb.append(item('미납', sum.late + '호실', 'late'));
+  if(sum.yearly) rb.append(item('사글세', sum.yearly + '호실 (별도)'));
+  $app.append(rb);
+
   const lg = el('div','legend');
-  const keys = el('div','keys'); keys.append(el('span','lg-occ','임대중'), el('span','lg-vac','공실'));
+  const keys = el('div','keys'); keys.append(el('span','lg-paid','납부'), el('span','lg-late','미납'), el('span','lg-occ','예정'), el('span','lg-vac','공실'));
   lg.append(keys, linkBtn('퇴실자 목록 →', () => location.hash = '#/extenants'));
-  $app.append(lg, el('div','source', `기준일 ${today()} · 층 구성: 2층 201~205호 / 3층 301~305호 / 4층 501~505호`));
+  $app.append(lg, el('div','source', `기준일 ${today()} · 납부 판단: 금전출납부 입금 내역의 "N월 월세" · 층 구성: 2층 201~205호 / 3층 301~305호 / 4층 501~505호`));
 
   const bk = el('div','databar');
-  bk.append(el('span', null, '데이터'), btn('백업 내보내기','small edit', exportBackup));
+  bk.append(el('span', null, '데이터'));
+  if(can.edit) bk.append(btn('백업 내보내기','small edit', exportBackup));
   if(can.admin) bk.append(btn('백업 → DB 이관','small edit', importBackup),
                           btn('사용자 관리','small edit', () => location.hash = '#/users'),
                           btn('변경 이력','small edit', () => location.hash = '#/audit'));
@@ -789,6 +856,29 @@ function importBackup(){
     }
   };
   f.click();
+}
+// =====================================================================
+// 5-2. 호실별 월세 납부상태 (ym: 'YYYY-MM')
+//   · 납부 판단: 해당 호실의 입금 중 귀속월이 ym인 것 ("10월 월세" 등)
+//   · code: paid 납부 / part 일부 / late 미납(납부일 지남) / due 예정 / yearly 사글세
+// =====================================================================
+function rentStatus(no, ym){
+  const ts = db.rooms[no].tenants;
+  const main = ts.find(t => t.rent > 0) || ts[0];
+  if(ts.some(t => t.payDay === '사글세')) return {code:'yearly', rent:main.rent, end:main.end};
+  const rent = main.rent || 0;
+  const [y, m] = ym.split('-').map(Number), last = new Date(y, m, 0).getDate();
+  const day = Number(String(main.payDay || '').replace(/[^\d]/g, '')) || null;
+  const pays = db.ledger.filter(e => e.room === no && e.dir === '입금' && e.type === '입금' &&
+    (rentMonth(e) === `${ym}-01` || (!rentMonth(e) && /월세/.test(e.item) && e.date.startsWith(ym))));
+  const paid = pays.reduce((a, e) => a + e.amount, 0);
+  const lastPay = pays.map(e => e.date).sort().pop();
+  const td = today(), curYm = td.slice(0,7);
+  let code;
+  if(paid > 0) code = paid >= rent ? 'paid' : 'part';
+  else if(ym < curYm || (ym === curYm && day && Number(td.slice(8)) > Math.min(day, last))) code = 'late';
+  else code = 'due';
+  return {code, rent, paid, day, last:lastPay ? `${Number(lastPay.slice(5,7))}/${Number(lastPay.slice(8))}` : ''};
 }
 function expCls(end){
   if(!end) return '';
@@ -1040,7 +1130,7 @@ function openLedgerModal(rec, lock = null, preset = {}){
 // =====================================================================
 // 8. 공용 관리현황 (금전출납부 / 달력)
 // =====================================================================
-const ui = {view:'ledger', ym:today().slice(0,7), selDate:null, showHist:false, stale:false};
+const ui = {view:'ledger', ym:today().slice(0,7), selDate:null, showHist:false, stale:false, mainYm:null};
 try{ ui.view = localStorage.getItem('newgenvill2_view') || 'ledger'; }catch(e){}
 
 function renderCommon(){
